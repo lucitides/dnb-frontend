@@ -11,16 +11,16 @@ import { renderHook, waitFor, act } from "@testing-library/react";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+const mockUser = { id: "me", role: "admin", tier: "super_admin" };
 // Authenticated super-admin so the hook's fail-closed guard lets it fetch.
-// The user object must be a stable reference: the hook's load effect keys off
-// `user`, so a fresh object every render would re-trigger the effect (and
-// consume a one-shot reject / overwrite an optimistic update).
-const authMock = vi.hoisted(() => ({
-  user: { id: "me", role: "admin", tier: "super_admin" },
-}));
 vi.mock("@/hooks/useAuth", () => ({
-  default: () => ({ user: authMock.user, loading: false }),
-  useAuth: () => ({ user: authMock.user, loading: false }),
+  default: () => ({ user: mockUser, loading: false }),
+  useAuth: () => ({ user: mockUser, loading: false }),
+}));
+
+vi.mock("@/lib/admin/audit", () => ({
+  logAuditEvent: vi.fn(),
+  AUDIT_ACTIONS: { ROLE_DEMOTE: "role_demote", ROLE_REVOKE: "role_revoke" },
 }));
 
 vi.mock("@/lib/auth/admin-tiers", () => ({
@@ -49,6 +49,9 @@ const STAFF = { id: "a2", name: "Bilal", email: "bilal@x.org", tier: "staff" };
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.listAdmins.mockResolvedValue({ admins: [{ ...SUPER }, { ...STAFF }] });
+  mocks.demoteAdmin.mockResolvedValue({ admin: { id: "a1", tier: "staff" } });
+  mocks.revokeAdmin.mockResolvedValue({ revoked: true, adminId: "a2" });
+  mocks.createInvite.mockResolvedValue({ invite: { token: "inv_mock_x", url: "u", expiresAt: "e" } });
 });
 
 async function mountLoaded() {
@@ -65,7 +68,7 @@ describe("useAdminTeam — load", () => {
   });
 
   it("surfaces a message when the list fails to load", async () => {
-    mocks.listAdmins.mockRejectedValueOnce(new Error("network down"));
+    mocks.listAdmins.mockRejectedValue(new Error("network down"));
     const { result } = renderHook(() => useAdminTeam());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.error).toBe("network down");
@@ -74,7 +77,7 @@ describe("useAdminTeam — load", () => {
 
 describe("useAdminTeam — demote", () => {
   it("updates the member's tier to staff on success", async () => {
-    mocks.demoteAdmin.mockResolvedValueOnce({ admin: { id: "a1", tier: "staff" } });
+    mocks.demoteAdmin.mockResolvedValue({ admin: { id: "a1", tier: "staff" } });
     const { result } = await mountLoaded();
 
     await act(async () => {
